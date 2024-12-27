@@ -1,0 +1,62 @@
+package de.seemoo.dyuan.scheduler.dynamic_priority.fair;
+
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+
+import de.seemoo.dyuan.netgen.NetworkModel;
+import de.seemoo.dyuan.netgen.Path;
+
+/**
+ * PF algorithm. cf. Chapter 31. Handbook of scheduling.
+ * PF algorithm is applicable to the case of implicit deadline.
+ * 
+ * @author dyuan
+ *
+ */
+public abstract class PFScheduler extends FairScheduler {
+
+	public PFScheduler(NetworkModel network, int nChannels, boolean isPfair) {
+		super(network, nChannels, isPfair);
+	}
+	
+	private Comparator<PFActiveTransmission> transmissionsComparator = new Comparator<PFActiveTransmission>() {
+
+		@Override
+		public int compare(PFActiveTransmission t1, PFActiveTransmission t2) {
+			int hop1 = t1.hop;
+			int hop2 = t2.hop;
+			Path path1 = getPaths().get(t1.pathId);
+			Path path2 = getPaths().get(t2.pathId);
+			
+			while (hop1 < path1.getAllEdges().size() && hop2 < path2.getAllEdges().size()) {
+				int dt1 = t1.getPseudoDeadline(hop1);
+				int dt2 = t2.getPseudoDeadline(hop2);
+				if (dt1 < dt2) {
+					return -1;
+				}
+				if (dt1 > dt2) {
+					return 1;
+				}
+				int b1 = t1.getSuccessorBit(hop1);
+				int b2 = t2.getSuccessorBit(hop2);
+				if (b1 > b2)
+					return -1;
+				if (b1 < b2)
+					return 1;
+				if (b1 == 0)
+					break;
+				hop1++;
+				hop2++;
+			}
+			return 0;		
+		}
+		
+	};
+
+	@Override
+	protected void sortPotentialTransmissions(List<PFActiveTransmission> potentialSet) {
+		Collections.sort(potentialSet, transmissionsComparator);
+	}
+
+}

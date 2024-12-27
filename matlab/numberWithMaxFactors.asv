@@ -1,0 +1,6 @@
+function numberWithMaxFactors()
+    for i=1:10000
+        factors = findFactors(i);
+        sprintf('%d %d\n', i, factors.)
+    end
+end

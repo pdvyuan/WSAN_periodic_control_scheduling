@@ -1,0 +1,631 @@
+package de.seemoo.dyuan.scheduler.optimal;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import de.seemoo.dyuan.netgen.Path;
+import de.seemoo.dyuan.netgen.structure.Edge;
+import de.seemoo.dyuan.netgen.structure.Node;
+import de.seemoo.dyuan.scheduler.Packet;
+import de.seemoo.dyuan.scheduler.SchedulerException;
+import de.seemoo.dyuan.scheduler.Transmission;
+import de.seemoo.dyuan.utils.CombinationGenerator;
+
+/**
+ * A sub-schedule node in the branch-and-bound algorithm.
+ * @author dyuan
+ *
+ */
+public class SubSchedule {
+
+	/**
+	 * Current slot. 
+	 */
+	private int currentSlot;
+	
+	/**
+	 * The transmission that happens in the current slot.
+	 * The next transmissions of each path in transmissionOnPaths will be scheduled.
+	 */
+//	private int[] transmissionsOnPaths;
+	
+	private boolean isClosed;
+	
+	private List<SubSchedule> children;
+	
+	
+	
+	/**
+	 * The row count is the same of the total paths, and the column count is two.
+	 * 
+	 * Every row stands for the next pending transmission of a path. The first item
+	 * is the period number and the second is the hop number.
+	 */
+	private int[][] pendingTransmissions;
+	
+	private OptimalBBScheduler scheduler;
+	
+	private SubSchedule parent;
+	
+	
+	public SubSchedule(OptimalBBScheduler scheduler, SubSchedule parent) {
+		this.currentSlot = 0;
+		this.scheduler = scheduler;
+		this.isClosed = false;
+		this.parent = parent;
+	}
+	
+	/**
+	 * Get the parent node. If the node is the root, then return null.
+	 * @return
+	 */
+	public SubSchedule getParent() {
+		return this.parent;
+	}
+	
+	public SubSchedule createChild() {
+		SubSchedule res = new SubSchedule(this.scheduler, this.parent);
+		res.currentSlot = this.currentSlot;
+		res.isClosed = this.isClosed;
+		res.pendingTransmissions = new int[res.scheduler.getPaths().size()][2];
+		res.parent = this;
+		for (int i=0; i<res.pendingTransmissions.length; i++) {
+			for (int j=0; j<res.pendingTransmissions[i].length; j++) {
+				res.pendingTransmissions[i][j] = this.pendingTransmissions[i][j]; 
+			}
+		}
+		return res;
+	}
+	
+	/**
+	 * initialize the pending packets. 
+	 * The next transmission on every path is the 0th period and 0th hop.
+	 */
+	public void initPendingPackets() {
+		this.pendingTransmissions = new int[scheduler.getPaths().size()][2];
+		for (int i=0; i<this.pendingTransmissions.length; i++) {
+			for (int j=0; j<2; j++) {
+				this.pendingTransmissions[i][j] = 0;
+			}
+		}
+		this.currentSlot = 0;
+	}
+	
+	public int[][] getPendingTransmissions() {
+		return this.pendingTransmissions;
+	}
+	
+	/**
+	 * compute the pre_k,s of a transmission according to the formula in the paper.
+	 * @param path path index.
+	 * @param period the period of the transmission.
+	 * @param hop the hop index of the transmission.
+	 * 
+	 */
+	private int computePreKS(int path, int period, int hop) {
+		int nextPeriod = this.pendingTransmissions[path][0];
+		int nextHop = this.pendingTransmissions[path][1];
+		if (period > nextPeriod) {
+			//not yet released.
+			return hop;
+		} else if (period == nextPeriod && hop > nextHop) {
+			//released
+			return hop-nextHop;
+		}
+		return 0;
+	}
+	
+	private void transmitNext(int path) {
+		Path apath = this.scheduler.getPaths().get(path);
+		int hop = this.pendingTransmissions[path][1];
+		hop = (hop + 1) % apath.getAllEdges().size();
+		this.pendingTransmissions[path][1] = hop;
+		if (hop == 0) {
+			this.pendingTransmissions[path][0] += 1;
+		}
+	}
+	
+	/**
+	 * Try to transmit the current packet on a certain path.
+	 * @throws SchedulerException 
+	 */
+	private void tryToTransmitNext(int path) throws SchedulerException {
+		Path apath = this.scheduler.getPaths().get(path);
+		int period = this.pendingTransmissions[path][0];
+		int hop = this.pendingTransmissions[path][1];
+		if (period >= scheduler.getHyperPeriod() / apath.getFlow().getPeriod())
+			throw new SchedulerException(SchedulerException.NO_MORE_TRANSMISSION_AVAILABLE);
+		int preKS = this.computePreKS(path, period, hop);
+		int packetReleaseTime = apath.getFlow().getPeriod()*period;
+		int anticipatedReleaseTime = preKS + Math.max(currentSlot, packetReleaseTime);
+		int postKS = apath.getAllEdges().size()-hop-1;
+		int deadline = packetReleaseTime + apath.getFlow().getDeadline() - 1 - postKS;
+		if (anticipatedReleaseTime > deadline)
+			throw new SchedulerException(SchedulerException.NOT_ENOUGH_SLOTS_FOR_FUTURE_TRANSMISSION);
+		if (packetReleaseTime > this.currentSlot) 
+			throw new SchedulerException(SchedulerException.PACKET_NOT_RELEASED);
+		
+		hop = (hop + 1) % apath.getAllEdges().size();
+		this.pendingTransmissions[path][1] = hop;
+		if (hop == 0) {
+			this.pendingTransmissions[path][0] += 1;
+		}
+		
+	}
+	
+	/**
+	 * Given the necessary information, create an object for a pending transmission.
+	 * 
+	 * @param path the path index.
+	 * @param period the period index.
+	 * @param hop the hop index.
+	 * @throws SchedulerException if there is not enough slots for schedule the current transmission.
+	 * 
+	 */
+	private Transmission computeTransmissionRange(int path, int period, int hop) throws SchedulerException {
+		Transmission result = new Transmission();
+		Path apath = scheduler.getPaths().get(path);
+		int packetReleaseTime = apath.getFlow().getPeriod()*period;
+		int preKS = this.computePreKS(path, period, hop); 
+		result.anticipatedReleaseTime = preKS + Math.max(currentSlot, packetReleaseTime);
+		int postKS = apath.getAllEdges().size()-hop-1;
+		result.deadline = packetReleaseTime + apath.getFlow().getDeadline() - 1 - postKS;
+		if (result.anticipatedReleaseTime > result.deadline)
+			throw new SchedulerException(SchedulerException.NOT_ENOUGH_SLOTS_FOR_FUTURE_TRANSMISSION);
+		result.pathId = path;
+		result.currEdge = apath.getAllEdges().get(hop);
+		if (preKS > 0) {
+			result.preEdge = apath.getAllEdges().get(hop-1);
+		}
+		if (postKS > 0) {
+			result.postEdge = apath.getAllEdges().get(hop+1);
+		}
+		return result;		
+	}	
+	
+	/**
+	 * Compute the laxity upper bound of a transmission
+	 * @param range the transmission.
+	 * @return the laxity upper bound.
+	 * 
+	 */
+	private int computeLaxityUpperBoundOfTransmission(Transmission range) throws SchedulerException {
+		int laxity = Integer.MAX_VALUE;
+		
+		//case 0: tao_k
+		int lo = range.anticipatedReleaseTime;
+		int hi = range.deadline;
+		
+		int la = subComputeLaxity(range.pathId, range.currEdge, lo, hi, null, null);
+		if (laxity > la) {
+			laxity = la;
+		}
+		
+		//case 1 pre, tao_k
+		if (range.preEdge != null) {
+			la = subComputeLaxity(range.pathId, range.currEdge, lo-1, hi, range.preEdge, null);
+			if (laxity > la) {
+				laxity = la;
+			}
+		}
+		
+		//case 2 tao_k, post
+		if (range.postEdge != null) {
+			la = subComputeLaxity(range.pathId, range.currEdge, lo, hi+1, null, range.postEdge);
+			if (laxity > la) {
+				laxity = la;
+			}
+		}
+		
+		//case 3 pre, tao_k, post
+		if (range.preEdge != null && range.postEdge != null) {
+			la = subComputeLaxity(range.pathId, range.currEdge, lo-1, hi+1, range.preEdge, range.postEdge);
+			if (laxity > la) {
+				laxity = la;
+			}
+		}
+		return laxity;
+	}
+	
+	private void addARecordToTable(Node key, Map<Node, Integer> map) {
+		Integer value = map.get(key);
+		int toPut;
+		if (value == null) {
+			toPut = 1;
+		} else {
+			toPut = value.intValue()+1;
+		}
+		map.put(key, toPut);
+	}
+	
+	/**
+	 * Compute the laxity of a transmission for the 4 possible cases.
+	 * @param pathId the path id of the current transmission.
+	 * @param currEdge the edge of the transmission.
+	 * @param lo the lower time bound.
+	 * @param hi the upper time bound
+	 * @param pre whether pre-edge is included.
+	 * @param post whether post-edge is included.
+	 * @throws SchedulerException
+	 */
+	private int subComputeLaxity(int pathId, Edge currEdge, 
+			int lo, int hi, Edge pre, Edge post)
+			throws SchedulerException {
+		int pathCount = this.scheduler.getPaths().size();	
+		//the other vertex id, number of times.
+		int totalTransmission = 1;
+		int sameEdge = 1;
+		HashMap<Node, Integer> n1Neighbours = new HashMap<Node, Integer>();
+		HashMap<Node, Integer> n2Neighbours = new HashMap<Node, Integer>();
+		if (pre != null) {
+			if (computeNeighbourhoodOfEdges(currEdge, pre, n1Neighbours, n2Neighbours)) {
+				sameEdge++;
+			}
+			totalTransmission++;
+		}
+		if (post != null) {
+			if (computeNeighbourhoodOfEdges(currEdge, post, n1Neighbours, n2Neighbours)) {
+				sameEdge++;
+			}
+			totalTransmission++;
+		}
+		for (int i=0; i<pathCount-1; i++) {
+			pathId++;
+			pathId = pathId % pathCount;
+			List<Edge> edges = this.computeTransmissionsInRange(pathId, lo, hi);
+			totalTransmission += edges.size();
+			for (Edge edge : edges) {
+				if (computeNeighbourhoodOfEdges(currEdge, edge, n1Neighbours, n2Neighbours)) {
+					sameEdge++;
+				}
+			}
+		}
+		int numN1Neighbour = 0;
+		for (int v : n1Neighbours.values()) {
+			numN1Neighbour += v;
+		}
+		int numN2Neighbour = 0;
+		for (int v : n2Neighbours.values()) {
+			numN2Neighbour += v;
+		}
+		int triangleConflict = 0;
+		for (Node node : n1Neighbours.keySet()) {
+			if (n2Neighbours.containsKey(node)) {
+				int total = n1Neighbours.get(node)+n2Neighbours.get(node);
+				if (total > triangleConflict) {
+					triangleConflict = total;
+				}
+			}
+		}
+		int conflicts = Math.max(numN1Neighbour, numN2Neighbour);
+		conflicts = Math.max(conflicts, triangleConflict) + sameEdge;
+		
+		int laxity =  hi - lo + 1 - Math.max(conflicts, 
+				(totalTransmission+this.scheduler.getNumOfChannels()-1)/this.scheduler.getNumOfChannels());
+//		System.out.printf("pre=%s, post=%s, laxity = %d\n", pre != null, post != null, laxity);
+		if (laxity < 0) {
+			throw new SchedulerException(SchedulerException.LAXITY_LESS_THAN_0);
+		}
+		return laxity;
+	}
+
+	/**
+	 * compute neighbourhoodness of two edges.
+	 * @param currEdge the edge for which the laxity is computed.
+	 * @param objEdge the object edge 
+	 * @param n1Neighbours neighbourhood table of the smaller node of edge currEdge.
+	 * @param n2Neighbours neighbourhood table of the larger node of edge currEdge.
+	 * @return if objEdge is the same as currEdge, return true, else false.
+	 */
+	private boolean computeNeighbourhoodOfEdges(Edge currEdge, Edge objEdge,
+			HashMap<Node, Integer> n1Neighbours, HashMap<Node, Integer> n2Neighbours) {
+		if (objEdge == currEdge) {
+			return true;
+		} 
+		
+		Node oen1 = objEdge.getSmallerNode();
+		Node oen2 = objEdge.getBiggerNode();
+		Node node;
+		if (oen1.equals(currEdge.getSmallerNode()) || oen2.equals(currEdge.getSmallerNode())) {
+			node = objEdge.getTheOtherNode(currEdge.getSmallerNode());
+			addARecordToTable(node, n1Neighbours);
+		}
+		if (oen1.equals(currEdge.getBiggerNode()) || oen2.equals(currEdge.getBiggerNode())) {
+			node = objEdge.getTheOtherNode(currEdge.getBiggerNode());
+			addARecordToTable(node, n2Neighbours);
+		}
+		
+		return false;
+	}
+	
+	private List<Transmission> potentialTransmissions = new ArrayList<Transmission>();
+	
+	public List<Transmission> getPotentialTransmissionPaths() {
+		return this.potentialTransmissions;
+	}
+	
+	//private List<Transmission> mustPaths = new ArrayList<Transmission>();
+	
+	/**
+	 * Compute the laxity upper bound for all pending transmissions.
+	 * At the same time, we buffer all the paths whose next transmissions can be directly scheduled.
+	 * @return laxity
+	 */
+	public int computeLaxityUpperBound() {
+		this.potentialTransmissions.clear();
+		//this.mustPaths.clear();
+		int laxity = Integer.MAX_VALUE;
+		try {
+			for (int i=0; i<this.scheduler.getPaths().size(); i++) {
+				Path path = this.scheduler.getPaths().get(i);
+				int period = this.pendingTransmissions[i][0];
+				int hops = this.pendingTransmissions[i][1];
+				if (period < this.scheduler.getHyperPeriod() / path.getFlow().getPeriod()) {
+					for (int trans = hops; trans < path.getAllEdges().size(); trans++) {
+						Transmission range = this.computeTransmissionRange(i, period, trans);
+						int la = this.computeLaxityUpperBoundOfTransmission(range);
+	//					System.out.printf("period %d, path %d, edge %s, laxity = %d\n", period, i, range.currEdge.description(),
+	//							la);
+						if (la >= 0 && trans == hops 
+								&& range.anticipatedReleaseTime <= this.currentSlot) {
+//							if (range.deadline == this.currentSlot) {
+//								
+//							} else {
+//								
+//							}
+							potentialTransmissions.add(range);
+							
+						}
+						if (la < laxity)
+							laxity = la;
+					}
+					for (int per = period+1; per<this.scheduler.getHyperPeriod() / path.getFlow().getPeriod(); per++) {
+						for (int trans = 0; trans<path.getAllEdges().size(); trans++) {
+							Transmission range = this.computeTransmissionRange(i, per, trans);
+							int la = this.computeLaxityUpperBoundOfTransmission(range);
+	//						System.out.printf("period %d, path %d, edge %s, laxity = %d\n", per, i, range.currEdge.description(),
+	//								la);
+							if (la < laxity)
+								laxity = la;
+						}
+						
+					}
+				}
+				
+			}
+		} catch(SchedulerException e) {
+			if (e.getReason() != SchedulerException.UNEXPECTED_EXCEPTION) {
+				laxity = -1;
+				//don't need to clear everything.
+			//	potentialPaths.clear();
+			} else {
+				throw new RuntimeException(e);
+			}
+			
+		}
+		return laxity;
+	}
+	/**
+	 * compute the transmissions that must fall within the range [lo, hi] on a certain path.
+	 * @param pathIndex the path index.
+	 * @param lo slot range lower bound.
+	 * @param hi slot range upper bound.
+	 * @return the transmissions represented by the edges.
+	 * 
+	 */
+	public List<Edge> computeTransmissionsInRange(int pathIndex, int lo, int hi) throws SchedulerException {
+		Path path = this.scheduler.getPaths().get(pathIndex);
+		int nextPacketIndex = this.pendingTransmissions[pathIndex][0];
+		int nextTransmissionIndex = this.pendingTransmissions[pathIndex][1];
+		List<Edge> edges = new ArrayList<Edge>();
+		Packet.Status status = new Packet.Status();
+		if (nextPacketIndex < scheduler.getHyperPeriod() / path.getFlow().getPeriod()) {
+			Packet pkt = new Packet(path, nextPacketIndex);
+			edges.addAll(pkt.getTransmissionsInTimeRange(this.currentSlot, lo, hi, nextTransmissionIndex, status));
+			if (!status.packetReleasedLaterThanTimeRange) {
+				for (int pktIndex = nextPacketIndex+1; pktIndex < scheduler.getHyperPeriod() / path.getFlow().getPeriod();
+						pktIndex++) {
+					pkt = new Packet(path, pktIndex);
+					edges.addAll(pkt.getTransmissionsInTimeRange(this.currentSlot, lo, hi, 0, status));
+					if (status.packetReleasedLaterThanTimeRange) {
+						break;
+					}
+				}
+			} 			
+		}
+		return edges;
+	}
+	
+	
+	private CombinationGenerator combGen;
+	
+	private int numConcurrentTransmissions;
+	
+	private boolean noMoreChildren = false;
+	
+	public void addChild(SubSchedule child) {
+		if (this.children == null) {
+			children = new ArrayList<SubSchedule>();
+		}
+		children.add(child);
+	}
+	
+	private static final int[] empty_int_array = new int[0];
+	
+	/**
+	 * We first try the more current transmissions, then less.
+	 * Create a new sub-schedule and append it to this sub-schedule.
+	 * @return null, if there is no more subschedule.
+	 * @throws SchedulerException 
+	 */
+	public SubSchedule createNextSubSchedule() {
+		if (noMoreChildren)
+			return null;
+		int maximumTransmissions = Math.min(potentialTransmissions.size(), scheduler.getNumOfChannels());
+		if (maximumTransmissions == 0) {
+			noMoreChildren = true;
+			SubSchedule ss = scheduleLinksInPotentialSetAndGenNextSubSchedule(empty_int_array);
+			this.addChild(ss);
+			return ss;
+		}
+		while (true) {
+			if (combGen == null) {
+				this.numConcurrentTransmissions = maximumTransmissions;
+				this.combGen = new CombinationGenerator(potentialTransmissions.size(), numConcurrentTransmissions);
+			} else {
+				if (!combGen.hasMore()) {
+					if (this.numConcurrentTransmissions > 1) {
+						this.numConcurrentTransmissions--;
+						this.combGen = new CombinationGenerator(potentialTransmissions.size(), numConcurrentTransmissions);
+					} else if (this.numConcurrentTransmissions == 1) {
+						this.numConcurrentTransmissions--;
+						SubSchedule ss = scheduleLinksInPotentialSetAndGenNextSubSchedule(empty_int_array);
+						this.addChild(ss);
+						noMoreChildren = true;
+						return ss;
+					} else {
+						noMoreChildren = true;
+						return null;
+					}
+				}
+			}
+			int[] combVal = combGen.getNext();
+			if (checkConflict(combVal)) {
+				continue;
+			}
+			SubSchedule ss = scheduleLinksInPotentialSetAndGenNextSubSchedule(combVal);
+			this.addChild(ss);
+			return ss;
+						
+		}
+		
+	}
+	
+	public void createAllPossibleSubSchedules() {
+		int laxity = this.computeLaxityUpperBound();
+		if (laxity >= 0) {
+			int items = potentialTransmissions.size();
+			if (items > 0) {
+				int transmissions = Math.min(items, scheduler.getNumOfChannels());
+				for (int i=transmissions; i>=1; i--) {
+					CombinationGenerator combGen = new CombinationGenerator(items, i);
+					while (combGen.hasMore()) {
+						int[] combVals = combGen.getNext();
+						if (checkConflict(combVals)) {
+							continue;
+						}
+						SubSchedule ss = scheduleLinksInPotentialSetAndGenNextSubSchedule(combVals);
+						this.addChild(ss);
+					}
+				}
+				
+			}
+		}
+		
+	}
+	
+	
+	private boolean checkConflict(int[] combValues) {
+		for (int i=0; i<combValues.length; i++) {
+			int index1 = combValues[i];
+			Edge edge1 = this.potentialTransmissions.get(index1).currEdge;
+			for (int j=i+1; j<combValues.length; j++) {
+				int index2 = combValues[j];
+				Edge edge2 = this.potentialTransmissions.get(index2).currEdge;
+				if (edge1.isConflict(edge2))
+					return true;
+			}
+		}
+		return false;
+	}
+	
+	/**
+	 * The version of scheduleLinksAndGenNextSubSchedule but without check.
+	 * The caller should make sure that the input params are correct.
+	 */
+	private SubSchedule scheduleLinksInPotentialSetAndGenNextSubSchedule(int[] combValues) {
+		SubSchedule result = this.createChild();
+//		result.transmissionsOnPaths = new int[combValues.length];
+		for (int i=0; i<combValues.length; i++) {
+			int index = combValues[i];
+			Transmission trans = this.potentialTransmissions.get(index); 
+			result.transmitNext(trans.pathId);
+//			result.transmissionsOnPaths[i] = trans.pathId; 
+		}
+		result.currentSlot++;
+		return result;
+	}
+	
+	/**
+	 * Schedule the transmissions in the current slot and generate the next sub-schedule.
+	 * @param transmissionsOnPaths the transmissions that should happen on the path array.
+	 * @return the next sub-schedule.
+	 * @throws SchedulerException 
+	 */
+	public SubSchedule schedulePathsAndGenNextSubSchedule(int[] transmissionsOnPaths) throws SchedulerException {
+		SubSchedule result = this.createChild();
+//		result.transmissionsOnPaths = new int[combValues.length];
+		for (int i=0; i<transmissionsOnPaths.length; i++) { 
+			result.tryToTransmitNext(transmissionsOnPaths[i]);
+//			result.transmissionsOnPaths[i] = trans.pathId;  
+		}
+		result.currentSlot++;
+		return result;
+	}
+	
+//	public int[] getTransmissionsHappened() {
+//		return this.transmissionsOnPaths;
+//	}
+	/**
+	 * 
+	 * @return the transmissions on the paths that happen in the last slot.
+	 */
+	public List<Integer> getTransmissionsHappenedBeforeTheSlot() {
+		List<Integer> ret = new ArrayList<Integer>();
+		if (this.parent != null) {
+			for (int path = 0; path<this.scheduler.getPaths().size(); path++) {
+				if (this.pendingTransmissions[path][0] != this.parent.pendingTransmissions[path][0]
+						|| this.pendingTransmissions[path][1] != this.parent.pendingTransmissions[path][1]) {
+					ret.add(path);
+				}
+			}
+		}
+		return ret;
+	}
+	
+	public int getCurrentSlotNum() {
+		return this.currentSlot;
+	}
+	
+	public boolean isClosed() {
+		return this.isClosed;
+	}
+
+	public List<SubSchedule> getChildren() {
+		return this.children;
+	}
+	
+	/**
+	 * Check whether the scheduling has ended?
+	 * @return
+	 */
+	public boolean isScheduleEnded() {
+		for (int i=0; i<this.pendingTransmissions.length; i++) {
+			if (this.pendingTransmissions[i][0] < this.scheduler.getHyperPeriod() / this.scheduler.getPaths().get(i).getFlow().getPeriodId())
+				return false;
+		}
+		return true;
+	}
+	
+	/**
+	 * Close a node.
+	 */
+	public void close() {
+		this.isClosed = true;
+		this.children = null;
+		this.combGen = null;
+		this.pendingTransmissions = null;
+		this.potentialTransmissions = null;
+	}
+}

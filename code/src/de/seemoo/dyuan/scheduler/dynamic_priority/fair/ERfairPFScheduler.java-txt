@@ -1,0 +1,16 @@
+package de.seemoo.dyuan.scheduler.dynamic_priority.fair;
+
+import de.seemoo.dyuan.netgen.NetworkModel;
+
+public class ERfairPFScheduler extends PFScheduler {
+
+	public ERfairPFScheduler(NetworkModel network, int nChannels) {
+		super(network, nChannels, false);
+	}
+
+	@Override
+	public String getName() {
+		return "ERfair-PF";
+	}
+
+}

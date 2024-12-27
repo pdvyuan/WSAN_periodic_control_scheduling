@@ -1,0 +1,20 @@
+function spectralPartition(nodes, adj)
+    gplot(adj, nodes(:, 3:4));
+    numNodes = size(adj, 1);
+    deg = zeros(numNodes, numNodes);
+    for i=1:numNodes
+        deg(i, i) = sum(adj(i, :));
+    end
+    laplacian = deg - adj;
+    [V, D] = eig(laplacian);
+    eigValues = zeros(1, numNodes);
+    for i=1:numNodes
+        eigValues(i) = D(i, i);
+    end
+    [eigValues, ids] = sort(eigValues);
+    eigValue = eigValues(2);
+    eigVector = V(:, ids(2)); 
+    [tmp, ids] = sort(eigVector);
+    group1 = ids(1:floor(length(ids)/2));
+    group2 = ids(length(group1)+1:length(ids))
+end

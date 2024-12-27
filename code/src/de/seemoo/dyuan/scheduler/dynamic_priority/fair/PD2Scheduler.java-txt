@@ -1,0 +1,60 @@
+package de.seemoo.dyuan.scheduler.dynamic_priority.fair;
+
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+
+import de.seemoo.dyuan.netgen.NetworkModel;
+
+/**
+ * PD2 scheduler algorithm.
+ * 
+ * @author dyuan
+ *
+ */
+public abstract class PD2Scheduler extends FairScheduler {
+
+	public PD2Scheduler(NetworkModel network, int nChannels, boolean isPfair) {
+		super(network, nChannels, isPfair);
+	}
+
+	private Comparator<PFActiveTransmission> transmissionsComparator = new Comparator<PFActiveTransmission>() {
+
+		@Override
+		public int compare(PFActiveTransmission t1, PFActiveTransmission t2) {
+			int hop1 = t1.hop;
+			int hop2 = t2.hop;
+			
+			int dt1 = t1.getPseudoDeadline(hop1);
+			int dt2 = t2.getPseudoDeadline(hop2);
+			if (dt1 < dt2) {
+				return -1;
+			}
+			if (dt1 > dt2) {
+				return 1;
+			}
+			int b1 = t1.getSuccessorBit(hop1);
+			int b2 = t2.getSuccessorBit(hop2);
+			if (b1 > b2)
+				return -1;
+			if (b1 < b2)
+				return 1;
+			if (b1 == 1) {
+				int groupDeadline1 = t1.getGroupDeadline(hop1);
+				int groupDeadline2 = t2.getGroupDeadline(hop2);
+				if (groupDeadline1 > groupDeadline2)
+					return -1;
+				if (groupDeadline1 < groupDeadline2)
+					return 1;
+			}
+			return 0;		
+		}
+		
+	};
+
+	@Override
+	protected void sortPotentialTransmissions(List<PFActiveTransmission> potentialSet) {
+		Collections.sort(potentialSet, transmissionsComparator);
+	}
+	
+}

@@ -1,0 +1,133 @@
+package de.seemoo.dyuan.scheduler.dynamic_priority.fair;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import de.seemoo.dyuan.netgen.Flow;
+import de.seemoo.dyuan.netgen.NetworkModel;
+import de.seemoo.dyuan.netgen.Path;
+import de.seemoo.dyuan.scheduler.ActiveTransmission;
+import de.seemoo.dyuan.scheduler.HeuristicScheduler;
+
+/**
+ * 
+ * The base class of a class of Fair (Pfair, ERFair) scheduling algorithms.
+ * cf. Chapter 31. Handbook of scheduling.
+ * 
+ * The class of heuristics only works with implicit deadlines.
+ * 
+ * @author dyuan
+ *
+ */
+public abstract class FairScheduler extends HeuristicScheduler {
+
+	protected final boolean isPfair;
+	
+	/**
+	 * 
+	 * @param isPfair true if is Pfair, false if is ERfair. 
+	 */
+	public FairScheduler(NetworkModel network, int nChannels, boolean isPfair) {
+		super(network, nChannels);
+		for (Path path : this.getPaths()) {
+			Flow flow = path.getFlow();
+			if (flow.getDeadline() != flow.getPeriod()) {
+				throw new IllegalArgumentException("PF algorithm assumes implict deadline.");
+			}
+		}
+		this.isPfair = isPfair;
+	}
+	
+	public class PFActiveTransmission extends ActiveTransmission {
+		public int period;
+		public int hop;
+		
+		/**
+		 * Compute the pseudorelease of subtask T_hop. 
+		 * 
+		 */
+		public int getPseudoReleaseTime(int hop) {
+			Path path = getPaths().get(pathId);
+			Flow flow = path.getFlow();
+			return (int) Math.floor( ((double)hop) * flow.getPeriod() / path.getAllEdges().size())
+					+ flow.getPeriod() * period;
+		}
+		/**
+		 * Compute the pseudo-deadline of subtask T_hop.
+		 * 
+		 */
+		public int getPseudoDeadline(int hop) {
+			Path path = getPaths().get(pathId);
+			Flow flow = path.getFlow();
+			return (int) Math.ceil(((double)(hop+1)) * flow.getPeriod() / path.getAllEdges().size())
+					+ flow.getPeriod() * period;
+		}
+		
+		public int getPseudoReleaseTime() {
+			return getPseudoReleaseTime(hop);
+		}
+		
+		public int getPseudoDeadline() {
+			return getPseudoDeadline(hop);
+		}
+		
+		public int getSuccessorBit(int hop) {
+			return getPseudoDeadline(hop) - getPseudoReleaseTime(hop+1);
+		}
+		
+		public int getSuccessorBit() {
+			return getSuccessorBit(hop);
+		}
+		
+		public int getWindowSize(int hop) {
+			return this.getPseudoDeadline(hop) - this.getPseudoReleaseTime(hop);
+		}
+		
+		public int getGroupDeadline(int hop) {
+			if (this.getSuccessorBit(hop) != 1) {
+				throw new IllegalArgumentException("the starting point of computing group deadline must have successor bit 1");
+			}
+			Path path = getPaths().get(pathId);
+			int exeTime = path.getAllEdges().size();
+			if (2 * exeTime < path.getFlow().getPeriod() && exeTime == path.getFlow().getPeriod())
+				return 0;
+			//group deadline of a task T is only important when the task is heavy but does not have unit weight. 0.5<=wt(T)<1
+			hop++;
+			while (hop < path.getAllEdges().size()) {
+				if (this.getSuccessorBit(hop) == 0)
+					return this.getPseudoDeadline(hop);
+				if (this.getWindowSize(hop) >= 3) {
+					return this.getPseudoDeadline(hop)-1;
+				}
+				hop++;
+			}
+			throw new IllegalArgumentException("should not come to here");
+		}
+	}
+	
+	protected List<? extends ActiveTransmission> collectAndOrderPotentialTransmissions(int slot) {
+		List<PFActiveTransmission> potentialTransmissions = new ArrayList<PFActiveTransmission>();
+		for (int path=0; path<this.getPaths().size(); path++) {
+			if (this.pendingTransmissionsStates[path] != STATE_TRANSMISSION_RELEASED)
+				continue;
+			Path apath = this.getPaths().get(path);
+			int nextTransPeriod = this.pendingTransmissions[path][0];
+			int hop = this.pendingTransmissions[path][1];
+			//released
+			PFActiveTransmission at = new PFActiveTransmission();
+			at.edge = apath.getAllEdges().get(hop);
+			at.pathId = path;
+			at.period = nextTransPeriod;
+			at.hop = hop;
+			
+			if (!this.isPfair || at.getPseudoReleaseTime(hop) <= slot)
+				potentialTransmissions.add(at);
+		}
+		sortPotentialTransmissions(potentialTransmissions);
+		return potentialTransmissions;
+	}
+	
+	protected abstract void sortPotentialTransmissions(List<PFActiveTransmission> potentialSet);
+
+
+}

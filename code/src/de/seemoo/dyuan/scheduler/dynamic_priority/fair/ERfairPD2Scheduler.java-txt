@@ -1,0 +1,16 @@
+package de.seemoo.dyuan.scheduler.dynamic_priority.fair;
+
+import de.seemoo.dyuan.netgen.NetworkModel;
+
+public class ERfairPD2Scheduler extends PD2Scheduler {
+
+	public ERfairPD2Scheduler(NetworkModel network, int nChannels) {
+		super(network, nChannels, false);
+	}
+
+	@Override
+	public String getName() {
+		return "ERfair-PD2";
+	}
+
+}

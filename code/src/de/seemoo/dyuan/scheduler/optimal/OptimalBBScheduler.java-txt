@@ -1,0 +1,77 @@
+package de.seemoo.dyuan.scheduler.optimal;
+
+import de.seemoo.dyuan.netgen.NetworkModel;
+import de.seemoo.dyuan.scheduler.ScheduleResult;
+import de.seemoo.dyuan.scheduler.SchedulerBase;
+/**
+ * Optimal Branch-and-bound Scheduling based on the works of Saifullah et. al.
+ * The scheduling should be NP-hard.
+ * 
+ * @author dyuan
+ *
+ */
+public class OptimalBBScheduler extends SchedulerBase {
+	
+	public OptimalBBScheduler(NetworkModel network, int nChannels) {
+		super(network, nChannels);
+	}
+	
+	/**
+	 * Create the first root sub-schedule.
+	 * @return
+	 */
+	public SubSchedule createRootSubSchedule() {
+		SubSchedule sch = new SubSchedule(this, null);
+		sch.initPendingPackets();
+		return sch;
+	}
+	
+	/**
+	 * 
+	 * @return null, if there is no more node.
+	 */
+	private SubSchedule gotoNextNode(SubSchedule node, int laxity) {
+		if (laxity < 0) {
+			node.close();
+			while ((node = node.getParent()) != null) {
+//				System.err.println("pa");
+				SubSchedule ss = node.createNextSubSchedule();
+				if (ss != null) {
+//					System.out.println("ch1");
+					return ss;
+				} else {
+					//no more children.
+					node.close();
+				}
+			}
+			return null;
+		} else {
+//			System.out.println("ch2");
+			return node.createNextSubSchedule();
+		}
+	}
+	
+	
+	/**
+	 * Find the optimal schedule with the branch-and-bound algorithm.
+	 */
+	public ScheduleResult schedule() {
+		SubSchedule root = this.createRootSubSchedule();
+		SubSchedule node = root;
+		while (node != null) {
+			if (node.isScheduleEnded()) {
+				return ScheduleResult.createScheduleResultFromBBEndingNode(node, this);
+			}
+			int laxity = node.computeLaxityUpperBound();
+			node = this.gotoNextNode(node, laxity);
+		}
+		return ScheduleResult.createUnschedulableResult(this);
+	}
+
+	@Override
+	public String getName() {
+		return "BB";
+	}
+	
+	
+}

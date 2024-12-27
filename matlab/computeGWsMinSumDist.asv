@@ -1,0 +1,16 @@
+function gws = computeGWsMinSumDist(sensors, num, maxx, maxy)
+%computeGWsMinSumDist place num of GWs that minize the sum distance between
+% all source and destination sensor nodes to the nearest GWs.
+%   sensors is a n*3 matrix. 
+%   row i represents the sensor i, the values correspond to the
+%   x-coordinate, y coordinate and the period of a sensor node.
+%   maxx, the width of the space. maxy, the height of the space.
+    gws = [rand(num, 1)*maxx, rand(num, 1)*maxy];
+    clusters = cell(numGWs, 1);
+    while (1)
+        c = cluterNodes(gws, sensors);
+        
+        
+        
+    end
+end

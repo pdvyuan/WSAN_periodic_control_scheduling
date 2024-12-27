@@ -1,0 +1,4 @@
+function findFactors(val)
+    for i=1:val
+        if (mod(val, i) == )
+end

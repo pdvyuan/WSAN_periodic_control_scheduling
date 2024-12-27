@@ -1,0 +1,66 @@
+function metrics = effectOfGWPlacementOnRouting(physical, numGWs, metricType)
+    file = 'D:\pdv\workspace\realtime-tdma\log\redo\placeGWs\';
+    if (physical)
+        file = [file, 'physical\convert.txt'];
+    else
+        file = [file, 'random\convert.txt'];
+    end
+    data = extract_data(file);
+    data = data(find(data(:, 2) == numGWs), :);
+    
+    
+    metrics = [];
+    metricsE = [];
+    for subtype = 0:1:2
+        aData = data(find(data(:, 4) == subtype), :);
+        metricsRow = [];
+        for place = 0:1:6
+            tData = aData(find(aData(:, 3) == place), :);
+            if (strcmp(me))
+            
+            metricsRow = [metricsRow, mean(tData(:, 7)./tData(:, 6))]; %feasibility
+            %metricsRow = [metricsRow, mean(tData(:, 8))]; %reliability
+            %metricsRow = [metricsRow, mean(tData(:, 9))]; %weighted-reliability
+            %metricsRow = [metricsRow, mean(tData(:, 10))]; %hops
+            %metricsRow = [metricsRow, mean(tData(:, 11))]; %weighted-hops
+        end
+        metrics = [metrics; metricsRow];
+    end
+    bar(metrics');
+%     routablePercent = [routablePercent; routableRow];
+%     routablePercentE = [routablePercentE; routableERow];
+% 
+%     reliability = [reliability; reliabilityRow];
+%     reliabilityE = [reliabilityE; reliabilityERow];
+% 
+%     hops = [hops; hopsRow];
+%     hopsE = [hopsE; hopsERow];
+% 
+%     routablePercent = routablePercent * 100;
+%     routablePercentE = routablePercentE * 100;
+%     barwitherr(routablePercentE, routablePercent);
+      set(gca,'XTickLabel', {'sector-center', 'min-sum-dist', 'cluster-min-sum-dist', ...
+             'min-sum-square-dist', 'cluster-min-sum-square-dist', 'center', 'spectral partition'});
+%     ylabel('mean percentage of flows with 2-disjoint-paths (%)');
+%     legend('sector-center', 'min-sum-dist', 'cluster-min-sum-dist', ...
+%         'min-sum-square-dist', 'cluster-min-sum-square-dist', 'center');
+%     
+%     figure;
+%     barwitherr(reliabilityE, reliability);
+%     set(gca,'XTickLabel', {'unreliable GWs', 'reliable GWs'});
+%     ylabel('mean flow reliability');
+%     legend('sector-center', 'min-sum-dist', 'cluster-min-sum-dist', ...
+%         'min-sum-square-dist', 'cluster-min-sum-square-dist', 'center');
+%     
+%     figure;
+%     barwitherr(hopsE, hops);
+%     set(gca,'XTickLabel', {'unreliable GWs', 'reliable GWs'});
+%     ylabel('mean flow total hops');
+%     legend('sector-center', 'min-sum-dist', 'cluster-min-sum-dist', ...
+%         'min-sum-square-dist', 'cluster-min-sum-square-dist', 'center');
+end
+
+function data = extract_data(file)
+    x = importdata(file);
+    data = x.data;
+end
