@@ -113,7 +113,11 @@ function [feasibles, saveRate, rate] = compareRepSch(implicit, physical, piggyba
     
     if (toPlot)
         figure(f3);
-        plot(trans, meanTimes, 'r+');
+        plot(pdata(:, 15), pdata(:, 11) / 10^6, 'r+');
+        %disp('max')
+        %max(pdata(:, 11))
+        %plot(trans, meanTimes, 'r+');
+        %csvwrite('d1.csv', [pdata(:, 15), pdata(:, 11)/ 10^6]);
 
         figure(f4);
         plot(pdata(:, 15), pdata(:, 11)./pdata(:, 15), 'r.');
@@ -141,6 +145,9 @@ function [feasibles, saveRate, rate] = compareRepSch(implicit, physical, piggyba
         figure(f3);
         set(gca, 'FontSize', 15);
         plot(pdata(:, 15), pdata(:, 11) / 10^6, 'b.');
+        %csvwrite('d2.csv', [pdata(:, 15), pdata(:, 11)/ 10^6]);
+        %disp('max')
+        %max(pdata(:, 11))
         %plot(trans, meanTimes, 'b.');
         xs = axis;
         axis([xs(1), 150000, xs(3), xs(4)]);
@@ -151,6 +158,7 @@ function [feasibles, saveRate, rate] = compareRepSch(implicit, physical, piggyba
 
         figure(f4);
         plot(pdata(:, 15), pdata(:, 11)./pdata(:, 16), 'b.');
+        
     end
     
     rates = [];
